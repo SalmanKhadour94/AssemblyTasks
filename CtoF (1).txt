@@ -1,0 +1,241 @@
+______________________________________________________________________________________________________________________________
+
+Converting temperature from Celsius to Farenheit degrees and displying it on a 7-segment dispaly
+______________________________________________________________________________________________________________________________
+
+
+.include "m328Pdef.inc"
+
+.org 0x00
+	 rjmp start
+.org 0x32
+array: .DB 0x3F,0x06,0x5B,0x4F,0x66,0x6D,0x7D,0x07,0x7F,0x6F,0x77,0x7C,0x39,0x5E,0x79,0x71 ;encoded hex values for 7-segment display
+.dseg ;data segment
+.org 0x100
+dig1:.BYTE 1 ;digit on 1st segment - MOST SIGNIFICANT
+dig2:.BYTE 1 ;digit on 2nd segment
+dig3:.BYTE 1 ;digit on 3rd segment
+dig4:.BYTE 1 ;digit on 4th segment - LEAST SIGNIFICANT
+num_in:.BYTE 1 ;input for encode subroutine
+num_enc:.BYTE 1;output od encode subroutine
+disp_low: .BYTE 1
+disp_high: .BYTE 1
+F_in_low:.BYTE 1
+F_in_high:.BYTE 1
+C_out_low:.BYTE 1
+C_out_high: .BYTE 1
+.cseg ;code segment
+
+start:  ;stack pointer initializtion
+		ldi r16, high(ramend) 
+		out sph, r16
+		ldi r16, low(ramend) 
+		out spl, r16
+
+		;choosing portD and 4 bits on portB as output 
+		ldi r16, 255
+		out ddrd, r16
+		ldi r16, 0b00001111
+		out ddrb, r16 
+
+	   ldi r16,0x45 ;input lower bytes
+	   ldi r17,0x23 ;input higher bytes
+
+	   sts F_in_low,r16
+	   sts F_in_high,r17
+	   call convert
+	   lds r18,C_out_low
+	   lds r19,C_out_high
+	   sts disp_low,r18
+	   sts disp_high,r19
+	   call isolate
+	   call display
+
+
+	   rjmp start
+
+
+convert:push r16
+		push r17
+		push r18
+		push r19
+
+	   lds r16,F_in_low
+	   lds r16,F_in_high
+	   subi r16,32
+	   sbci r17,0
+
+	   mov r18,r16 ;not necessary
+	   mov r19,r17
+   
+	   asr r19 ; /2
+	   ror r18
+   
+	   mov r16, r18
+	   mov r17,r19
+   
+	   asr r17 ; /4
+	   ror r16
+	   asr r17  ; /8
+	   ror r16
+	   asr r17  ; /16
+	   ror r16
+
+	   add r18,r16 ;output lower bytes
+	   adc r19,r17 ;output higher bytes
+
+	   sts C_out_low,r18
+	   sts C_out_high,r19
+
+	   pop r19
+	   pop r18
+	   pop r17
+	   pop r16
+	   ret
+
+
+isolate:push r17
+		push r18
+		push r19
+		push r20
+		push r21
+		push r22
+
+		lds r21,disp_low
+		lds r22,disp_high
+
+	    ldi r17,0b00001111
+		ldi r18,0b11110000
+
+		;digit 4 encode
+		mov r19,r21 ;copy lower nibble of the counter
+		and r19,r17 ;isolate 4 lower digits
+		sts num_in,r19 ;store value to num_in variable to use in encode subroutine
+		call encode ;change counter value to hex code
+		lds r20,num_enc ;load encoded in subroutine hex value to r20
+		sts dig4,r20 ;store r20 to dig4 variable (least significant)
+
+		;digit 3 encode
+		mov r19,r21 ;copy lower nibble of the counter
+		and r19,r18 ;isolate 4 higher digits
+		swap r19 ;swap lower and higher 4 bits so we have numbers from 0 to 15
+		sts num_in,r19 ;store value to num_in variable to use in encode subroutine
+		call encode ;change counter value to hex code
+		lds r20,num_enc ;load encoded in subroutine hex value to r20
+		sts dig3,r20 ;store r20 to dig3 variable 
+
+		;digit 2 encode
+		mov r19,r22 ;copy higher nibble of the counter
+		and r19,r17 ;isolate 4 lower digits
+		sts num_in,r19 ;store value to num_in variable to use in encode subroutine
+		call encode ;change counter value to hex code
+		lds r20,num_enc ;load encoded in subroutine hex value to r20
+		sts dig2,r20 ;store r20 to dig2 variable 
+
+		;digit 1 encode
+		mov r19,r22 ;copy higher nibble of the counter
+		and r19,r18 ;isolate 4 higher digits
+		swap r19 ;swap lower and higher 4 bits so we have numbers from 0 to 15
+		sts num_in,r19 ;store value to num_in variable to use in encode subroutine
+		call encode ;change counter value to hex code
+		lds r20,num_enc ;load encoded in subroutine hex value to r20
+		sts dig1, r20 ;store r20 to dig2 variable 
+
+		pop r17
+		pop r18
+		pop r19
+		pop r20
+		pop r21
+		pop r22
+		ret
+
+		
+
+;ENCODE subroutine - takes num_in ( chosen 4 bits of counter value ) 
+;and returns num_enc ( encoded number for 7 - segment display )
+encode: push r16
+		push r17
+		push r18
+		;pushing r30 nad r31 is not neccessary in this program
+		push r30 ;lower nibble of Z pointer
+		push r31 ;higher nibble of Z pointer
+		ldi zl,low(array*2) ;load lower nibble of first array address to lower nibble of Z
+	   	ldi zh,high(array*2) ;load higher nibble of first array address to higher nibble of Z
+		lds r16,num_in ;load isolated 4 digits of the couter (numbers from 0 to 15)
+		inc r16 ;instead of 0-15 we have 1-16; just for loop purpose
+		ldi r17,0 ;the loop repeats as long as r16(num_in +1) is the same as r17
+en_loop:lpm r18,z+ ;load value pointed by Z to r18 and post-increment Z
+		inc r17 ;increment r17
+		cp r17,r16 ;compare registers 
+		brne en_loop ;if compared registers are the same break out of the loop
+		sts num_enc,r18 ;write to num_enc hex code (from the array) that Z was pointing to at the time we broke out of the loop
+		pop r31
+		pop r30
+		pop r18
+		pop r17
+		pop r16
+		ret
+		
+;DISPLAY subroutine - loads dig1, dig2, dig3, dig4 values and sends them to ports	
+;displays "4 digits at once" - not really but it makes it look like it does
+display:push r16
+		push r17
+		push r18
+		ldi r18,10 ;d_loop counter - how long to display 4 chosen digits 
+
+d_loop: ;display chosen digit on the 1st segment
+		ldi r16,0b00001110 ;number for choosing the 1st segment from the left: 0 = ON, 1=OFF
+		out portb,r16 ;send to portB
+		lds r17,dig1 ;load hex code for the number to be displayed on the 1st segment
+		com r17 ;negate the number: 0->1, 1->0
+		out portd,r17 ;send the hex code to portD
+		call delay ;very short delay 
+
+		;display chosen digit on the 2nd segment
+		ldi r16,0b00001101 ;number for choosing the 2nd segment from the left: 0 = ON, 1=OFF 
+		out portb,r16 ;send to portB
+		lds r17,dig2 ;load hex code for the number to be displayed on the 2nd segment
+		com r17 ;negate the number: 0->1, 1->0
+		out portd,r17 ;send the hex code to portD
+		call delay ;very short delay
+
+		;display chosen digit on the 3rd segment
+		ldi r16,0b00001011 ;number for choosing the 3rd segment from the left: 0 = ON, 1=OFF
+		out portb,r16 ;send to portB
+		lds r17,dig3 ;load hex code for the number to be displayed on the 3rd segment
+		com r17 ;negate the number: 0->1, 1->0
+		out portd,r17 ;send the hex code to portD
+		call delay ;very short delay
+
+		;display chosen digit on the 4th segment
+		ldi r16,0b00000111 ;number for choosing the 4th segment from the left: 0 = ON, 1=OFF
+		out portb,r16 ;send to portB
+		lds r17,dig4 ;load hex code for the number to be displayed on the 4th segment
+		com r17 ;negate the number: 0->1, 1->0
+		out portd,r17 ;send the hex code to portD
+		call delay ;very short delay
+
+		dec r18 ;decrement the loop counter
+		brne d_loop ;break out of the loop when r18 reaches 0
+		pop r18
+		pop r17
+		pop r16
+		ret	
+			
+;DELAY subroutine
+delay:  push r16
+		push r17
+		push r18
+		ldi r18,1
+loop1:  ldi r17,150
+loop2:  ldi r16,255 
+loop3:  dec r16 
+		brne loop3 
+		dec r17 
+		brne loop2
+		dec r18
+		brne loop1
+		pop r18
+		pop r17
+		pop r16
+		ret
